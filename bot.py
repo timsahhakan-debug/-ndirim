@@ -41,6 +41,8 @@ TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 DRY_RUN = os.environ.get("DRY_RUN") == "1"  # 1 ise Telegram'a göndermez, ekrana yazar
 STATE_FILE = Path(__file__).parent / "sent.json"
+DEBUG_DIR = Path(__file__).parent / "debug"
+DIAG = []  # teşhis bilgileri
 
 PRICE_RE = re.compile(r"(\d{1,3}(?:\.\d{3})*(?:,\d{1,2})?)\s*TL")
 BADGE_RE = re.compile(r"%\s?(\d{1,2})\b")
@@ -124,7 +126,8 @@ async def scrape_category(page, name, base_url):
     for n in range(1, PAGES_PER_CATEGORY + 1):
         url = page_url(base_url, n)
         try:
-            await page.goto(url, wait_until="domcontentloaded", timeout=45000)
+            resp = await page.goto(url, wait_until="domcontentloaded", timeout=45000)
+            status = resp.status if resp else "?"
             try:
                 await page.wait_for_selector("a[href*='-p-'], a[href*='-pm-']", timeout=15000)
             except Exception:
@@ -135,11 +138,23 @@ async def scrape_category(page, name, base_url):
             cards = await page.evaluate(EXTRACT_JS)
         except Exception as e:
             print(f"[{name}] sayfa {n} hata: {e}")
+            DIAG.append(f"{name}: hata - {str(e)[:120]}")
             break
 
         print(f"[{name}] sayfa {n}: {len(cards)} ürün bulundu")
         seen_count += len(cards)
         if not cards:
+            try:
+                title = (await page.title())[:80]
+                body = (await page.inner_text("body"))[:150].replace("\n", " ")
+                DEBUG_DIR.mkdir(exist_ok=True)
+                safe = re.sub(r"[^A-Za-z0-9]", "_", name)
+                await page.screenshot(path=str(DEBUG_DIR / f"{safe}.png"), full_page=False)
+                (DEBUG_DIR / f"{safe}.html").write_text(await page.content(), encoding="utf-8")
+            except Exception as e:
+                title, body = "?", str(e)[:100]
+            print(f"[{name}] HTTP {status} | başlık: {title} | metin: {body}")
+            DIAG.append(f"{name}: HTTP {status} | {title} | {body}")
             break
         for c in cards:
             old, new, disc = analyze_card(c["text"])
@@ -208,7 +223,8 @@ async def main():
 
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(
-            headless=True, args=["--disable-blink-features=AutomationControlled"])
+            headless=True, channel="chromium",
+            args=["--disable-blink-features=AutomationControlled"])
         ctx = await browser.new_context(
             locale="tr-TR", timezone_id="Europe/Istanbul",
             viewport={"width": 1366, "height": 900},
@@ -233,8 +249,8 @@ async def main():
 
     print(f"Toplam {len(found)} uygun ürün, {len(to_send)} yeni.")
     if total_seen == 0:
-        send_telegram("⚠️ Hiç ürün okunamadı. Kategori linkleri yanlış olabilir "
-                      "ya da Hepsiburada erişimi engellemiş olabilir.")
+        detail = "\n\n".join(html.escape(d) for d in DIAG[:6])
+        send_telegram("⚠️ Hiç ürün okunamadı. Teşhis:\n\n" + detail)
 
     sent = 0
     for p in to_send[:MAX_MESSAGES_PER_RUN]:
