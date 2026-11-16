@@ -32,6 +32,7 @@ CATEGORIES = {
 
 MIN_DISCOUNT = 30          # yüzde olarak minimum indirim
 PAGES_PER_CATEGORY = 3     # her kategoride kaç sayfa taranacak
+TESHIS_MODU = True         # True iken ürün göndermez, örnek kutuların içeriğini gönderir
 MAX_MESSAGES_PER_RUN = 40  # bir çalışmada en fazla kaç ürün gönderilecek
 RESEND_AFTER_DAYS = 7      # aynı ürün kaç gün sonra tekrar gönderilebilir
 
@@ -121,7 +122,16 @@ EXTRACT_JS = r"""
     seen.add(href);
     const title = (a.getAttribute('title') || el.querySelector('h2, h3')?.innerText
                    || a.innerText.split('\n')[0] || '').trim();
-    out.push({ url: href, title, text: el.innerText || '' });
+    const bits = [];
+    for (const x of el.querySelectorAll('*')) {
+      if (x.children.length) continue;
+      const tx = (x.innerText || '').trim();
+      if (!/TL|%/.test(tx) || tx.length > 60) continue;
+      const key = x.getAttribute('data-test-id') || (x.className && x.className.toString().slice(0, 40)) || x.tagName;
+      bits.push(key + ' = ' + tx);
+      if (bits.length >= 12) break;
+    }
+    out.push({ url: href, title, text: el.innerText || '', bits });
   }
   return out;
 }
@@ -253,6 +263,16 @@ async def main():
             total_seen += count
             found += items
         await browser.close()
+
+    if TESHIS_MODU:
+        print(f"Teşhis modu: {len(found)} ürün indirimli sanıldı.")
+        send_telegram(f"🔧 Teşhis modu: {total_seen} ürün okundu, {len(found)} tanesi indirimli sanıldı. Örnekler:")
+        for p in sorted(found, key=lambda p: p["disc"], reverse=True)[:4]:
+            msg = (f"%{p['disc']:.0f} sanıldı · {p['cat']}\n{p['url']}\n\nKUTU METNİ:\n{p['text'][:900]}"
+                   f"\n\nFİYAT ALANLARI:\n" + "\n".join(p.get("bits", [])))
+            send_telegram(html.escape(msg[:3800]))
+            time.sleep(1.2)
+        return
 
     # Aynı ürünü tekrar gönderme, en yüksek indirimden başla
     unique = {}
