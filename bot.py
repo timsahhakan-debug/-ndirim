@@ -37,8 +37,8 @@ RESEND_AFTER_DAYS = 7      # aynı ürün kaç gün sonra tekrar gönderilebilir
 
 # =======================================================
 
-TOKEN = os.environ.get("T9122064678:AAHA2SJkz6Fx3Z_T3tCF5jATVnHxyBSj26A", "")
-CHAT_ID = os.environ.get("2041320927", "")
+TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 DRY_RUN = os.environ.get("DRY_RUN") == "1"  # 1 ise Telegram'a göndermez, ekrana yazar
 STATE_FILE = Path(__file__).parent / "sent.json"
 
