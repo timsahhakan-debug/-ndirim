@@ -22,12 +22,12 @@ from playwright.async_api import async_playwright
 # tarayıcının adres çubuğundan kopyalayarak buraya yapıştır.
 # Örnek görünüm: https://www.hepsiburada.com/xxxxx-c-123456
 CATEGORIES = {
-    "Bilgisayar": "BURAYA_LINK_YAPISTIR",
-    "Süpermarket": "BURAYA_LINK_YAPISTIR",
-    "Kozmetik": "BURAYA_LINK_YAPISTIR",
-    "Kişisel Bakım": "BURAYA_LINK_YAPISTIR",
-    "Yapı Market": "BURAYA_LINK_YAPISTIR",
-    "Oto Aksesuar": "BURAYA_LINK_YAPISTIR",
+    "Bilgisayar": "https://www.hepsiburada.com/bilgisayar-sistemleri-ve-ekipmanlari-c-2147483646",
+    "Süpermarket": "https://www.hepsiburada.com/supermarket-c-2147483619",
+    "Kozmetik": "https://www.hepsiburada.com/kozmetik-c-2147483603",
+    "Kişisel Bakım": "https://www.hepsiburada.com/saglik-kisisel-bakim-urunleri-c-2147483633",
+    "Yapı Market": "https://www.hepsiburada.com/yapi-market-hirdavatlar-c-2147483620",
+    "Oto Aksesuar": "https://www.hepsiburada.com/oto-aksesuarlari-c-2147483631",
 }
 
 MIN_DISCOUNT = 30          # yüzde olarak minimum indirim
@@ -37,8 +37,8 @@ RESEND_AFTER_DAYS = 7      # aynı ürün kaç gün sonra tekrar gönderilebilir
 
 # =======================================================
 
-TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
+TOKEN = os.environ.get("T9122064678:AAHA2SJkz6Fx3Z_T3tCF5jATVnHxyBSj26A", "")
+CHAT_ID = os.environ.get("2041320927", "")
 DRY_RUN = os.environ.get("DRY_RUN") == "1"  # 1 ise Telegram'a göndermez, ekrana yazar
 STATE_FILE = Path(__file__).parent / "sent.json"
 
