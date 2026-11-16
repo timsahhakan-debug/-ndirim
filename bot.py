@@ -32,7 +32,7 @@ CATEGORIES = {
 
 MIN_DISCOUNT = 30          # yüzde olarak minimum indirim
 PAGES_PER_CATEGORY = 3     # her kategoride kaç sayfa taranacak
-TESHIS_MODU = True         # True iken ürün göndermez, örnek kutuların içeriğini gönderir
+TESHIS_MODU = False        # True iken ürün göndermez, örnek kutuların içeriğini gönderir
 MAX_MESSAGES_PER_RUN = 40  # bir çalışmada en fazla kaç ürün gönderilecek
 RESEND_AFTER_DAYS = 7      # aynı ürün kaç gün sonra tekrar gönderilebilir
 
@@ -72,6 +72,28 @@ def drop_installments(prices):
         if not is_inst:
             out.append(p)
     return out
+
+
+def first_price(s: str):
+    s = re.sub(r"\s+(?=[,.]\d)", "", s or "")
+    m = PRICE_RE.search(s)
+    return parse_price(m.group(1)) if m else None
+
+
+def analyze_fields(c):
+    """Hepsiburada'nın etiketli fiyat alanlarından indirim hesaplar."""
+    old = first_price(c.get("orig"))
+    new = first_price(c.get("fin"))
+    m = re.search(r"(\d{1,2})", c.get("rate") or "")
+    rate = float(m.group(1)) if m else 0.0
+    if not old:          # eski fiyat yoksa indirim yok
+        return None, new, 0.0
+    calc = (old - new) / old * 100 if new and new < old else 0.0
+    if calc and rate:
+        disc = calc if abs(calc - rate) <= 3 else min(calc, rate)
+    else:
+        disc = calc or rate
+    return old, new, disc
 
 
 def analyze_card(text: str):
@@ -131,7 +153,14 @@ EXTRACT_JS = r"""
       bits.push(key + ' = ' + tx);
       if (bits.length >= 12) break;
     }
-    out.push({ url: href, title, text: el.innerText || '', bits });
+    const q = s => el.querySelector(s);
+    const orig = q('[class*="originalPrice"]')?.innerText || '';
+    const rate = q('[class*="discountRate"]')?.innerText || '';
+    const frac = q('[class*="finalPriceFraction"]');
+    const fin = q('[class*="finalPrice"]:not([class*="Fraction"])')?.innerText
+                || frac?.parentElement?.innerText || '';
+    const sepet = /Sepete özel/i.test(el.innerText || '');
+    out.push({ url: href, title, text: el.innerText || '', bits, orig, rate, fin, sepet });
   }
   return out;
 }
@@ -181,9 +210,11 @@ async def scrape_category(page, name, base_url):
             DIAG.append(f"{name}: HTTP {status} | {title} | {body}")
             break
         for c in cards:
-            old, new, disc = analyze_card(c["text"])
+            old, new, disc = analyze_fields(c)
             if disc >= MIN_DISCOUNT and disc < 95:
-                results.append({**c, "old": old, "new": new, "disc": disc, "cat": name})
+                results.append({"url": c["url"], "title": c["title"], "sepet": c.get("sepet"),
+                                "old": old, "new": new, "disc": disc, "cat": name, "text": c["text"],
+                                "bits": c.get("bits", [])})
         await page.wait_for_timeout(random.randint(3000, 6000))  # siteyi yormamak için
     return results, seen_count
 
@@ -210,7 +241,8 @@ def format_message(p) -> str:
     title = html.escape(p["title"][:150] or "Ürün")
     lines = [f"🔥 <b>%{p['disc']:.0f} indirim</b> · {html.escape(p['cat'])}", f"<b>{title}</b>"]
     if p["old"] and p["new"]:
-        lines.append(f"<s>{fmt_price(p['old'])} TL</s> → <b>{fmt_price(p['new'])} TL</b>")
+        lines.append(f"<s>{fmt_price(p['old'])} TL</s> → <b>{fmt_price(p['new'])} TL</b>"
+                     + (" (sepette)" if p.get("sepet") else ""))
     elif p["new"]:
         lines.append(f"<b>{fmt_price(p['new'])} TL</b>")
     lines.append(p["url"])
