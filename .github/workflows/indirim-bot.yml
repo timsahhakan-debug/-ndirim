@@ -2,7 +2,7 @@ name: Hepsiburada İndirim Botu
 
 on:
   schedule:
-    - cron: "0 * * * *"     # saatte bir (UTC)
+    - cron: "17 * * * *"    # saatte bir, her saatin 17. dakikasında (UTC)
   workflow_dispatch:         # Actions sekmesinden elle çalıştırmak için
 
 permissions:
