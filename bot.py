@@ -60,6 +60,19 @@ def fmt_price(v: float) -> str:
     return s[:-3] if s.endswith(",00") else s
 
 
+def drop_installments(prices):
+    """Başka bir fiyatın 3-12'ye bölümüne denk gelen tutarları (taksit) çıkarır."""
+    out = []
+    for p in prices:
+        is_inst = any(
+            q > p and abs(q / n - p) / p < 0.015
+            for q in prices for n in range(3, 13)
+        )
+        if not is_inst:
+            out.append(p)
+    return out
+
+
 def analyze_card(text: str):
     """Kart metninden eski fiyat, yeni fiyat ve indirim oranını çıkarır."""
     prices = []
@@ -71,6 +84,7 @@ def analyze_card(text: str):
             continue
         prices += [parse_price(m) for m in PRICE_RE.findall(line)]
     prices = [p for p in prices if p > 0]
+    prices = drop_installments(prices)
 
     old = new = None
     discount = 0.0
