@@ -43,6 +43,7 @@ CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 DRY_RUN = os.environ.get("DRY_RUN") == "1"  # 1 ise Telegram'a göndermez, ekrana yazar
 STATE_FILE = Path(__file__).parent / "sent.json"
 DEBUG_DIR = Path(__file__).parent / "debug"
+STATUS_FILE = Path(__file__).parent / "durum.json"  # arka arkaya engellenme sayısı
 DIAG = []  # teşhis bilgileri
 
 PRICE_RE = re.compile(r"(\d{1,3}(?:\.\d{3})*(?:,\d{1,2})?)\s*TL")
@@ -314,9 +315,22 @@ async def main():
     to_send = sorted(unique.values(), key=lambda p: p["disc"], reverse=True)
 
     print(f"Toplam {len(found)} uygun ürün, {len(to_send)} yeni.")
+    try:
+        status = json.loads(STATUS_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        status = {"engel": 0}
     if total_seen == 0:
-        detail = "\n\n".join(html.escape(d) for d in DIAG[:6])
-        send_telegram("⚠️ Hiç ürün okunamadı. Teşhis:\n\n" + detail)
+        status["engel"] = status.get("engel", 0) + 1
+        n = status["engel"]
+        print(f"Erişim engellendi ({n}. kez arka arkaya).")
+        if n == 3 or (n > 3 and (n - 3) % 24 == 0):
+            detail = "\n\n".join(html.escape(d) for d in DIAG[:6])
+            send_telegram(f"⚠️ Hepsiburada'ya {n} çalışmadır arka arkaya erişilemiyor. Teşhis:\n\n" + detail)
+    else:
+        if status.get("engel", 0) >= 3:
+            send_telegram("✅ Hepsiburada erişimi tekrar sağlandı.")
+        status["engel"] = 0
+    STATUS_FILE.write_text(json.dumps(status), encoding="utf-8")
 
     sent = 0
     for p in to_send[:MAX_MESSAGES_PER_RUN]:
