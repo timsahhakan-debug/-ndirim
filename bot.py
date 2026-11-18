@@ -40,6 +40,8 @@ RESEND_AFTER_DAYS = 7      # aynı ürün kaç gün sonra tekrar gönderilebilir
 
 TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
+# Birden fazla alıcı: virgülle ayır (örn. "2041320927,123456789,@kanaladi")
+CHAT_IDS = [c.strip() for c in CHAT_ID.split(",") if c.strip()]
 DRY_RUN = os.environ.get("DRY_RUN") == "1"  # 1 ise Telegram'a göndermez, ekrana yazar
 STATE_FILE = Path(__file__).parent / "sent.json"
 DEBUG_DIR = Path(__file__).parent / "debug"
@@ -220,22 +222,32 @@ async def scrape_category(page, name, base_url):
     return results, seen_count
 
 
-def send_telegram(text: str):
-    if DRY_RUN:
-        print("---\n" + text)
-        return True
+def _send_one(chat_id, text, tries=0):
     r = requests.post(
         f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-        json={"chat_id": CHAT_ID, "text": text, "parse_mode": "HTML",
+        json={"chat_id": chat_id, "text": text, "parse_mode": "HTML",
               "disable_web_page_preview": False},
         timeout=20,
     )
-    if r.status_code == 429:  # hız sınırı
+    if r.status_code == 429 and tries < 3:  # hız sınırı
         time.sleep(r.json().get("parameters", {}).get("retry_after", 5) + 1)
-        return send_telegram(text)
+        return _send_one(chat_id, text, tries + 1)
     if not r.ok:
-        print("Telegram hatası:", r.text)
+        print(f"Telegram hatası ({chat_id}):", r.text)
     return r.ok
+
+
+def send_telegram(text: str):
+    """Mesajı tüm alıcılara gönderir; en az birine ulaşırsa başarılı sayılır."""
+    if DRY_RUN:
+        print("---\n" + text)
+        return True
+    ok_any = False
+    for cid in CHAT_IDS:
+        ok_any = _send_one(cid, text) or ok_any
+        if len(CHAT_IDS) > 1:
+            time.sleep(0.4)
+    return ok_any
 
 
 def format_message(p) -> str:
