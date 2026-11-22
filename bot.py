@@ -31,7 +31,7 @@ CATEGORIES = {
 }
 
 MIN_DISCOUNT = 30          # yüzde olarak minimum indirim
-PAGES_PER_CATEGORY = 3     # her kategoride kaç sayfa taranacak
+PAGES_PER_CATEGORY = 5     # her kategoride kaç sayfa taranacak
 TESHIS_MODU = False        # True iken ürün göndermez, örnek kutuların içeriğini gönderir
 MAX_MESSAGES_PER_RUN = 40  # bir çalışmada en fazla kaç ürün gönderilecek
 RESEND_AFTER_DAYS = 7      # aynı ürün kaç gün sonra tekrar gönderilebilir
