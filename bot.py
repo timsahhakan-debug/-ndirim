@@ -28,6 +28,7 @@ CATEGORIES = {
     "Kişisel Bakım": "https://www.hepsiburada.com/saglik-kisisel-bakim-urunleri-c-2147483633",
     "Yapı Market": "https://www.hepsiburada.com/yapi-market-hirdavatlar-c-2147483620",
     "Oto Aksesuar": "https://www.hepsiburada.com/oto-aksesuarlari-c-2147483631",
+    "Giyim & Ayakkabı": "https://www.hepsiburada.com/giyim-ayakkabi-c-2147483636",
 }
 
 MIN_DISCOUNT = 30          # yüzde olarak minimum indirim
