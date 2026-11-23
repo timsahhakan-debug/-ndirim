@@ -392,8 +392,12 @@ async def main():
 
     if TRENDYOL_TESHIS and ty_counts:
         lines = [f"{k}: {v} ürün okundu" for k, v in ty_counts.items()]
-        lines += [d for d in DIAG if d.startswith("Trendyol")]
-        send_telegram("🔧 Trendyol teşhis:\n\n" + html.escape("\n".join(lines)))
+        extra = []
+        for d in DIAG:  # tekrarları at
+            if d.startswith("Trendyol") and d not in extra:
+                extra.append(d)
+        lines += extra
+        send_telegram("🔧 Trendyol teşhis:\n\n" + html.escape("\n".join(lines))[:3800])
         for name, cards in list(SAMPLES.items())[:3]:
             for c in cards[:1]:
                 msg = (f"{name}\n{c['url']}\n\nKUTU METNİ:\n{c['text'][:900]}"
