@@ -190,6 +190,45 @@ def page_url(base: str, n: int, site: str = "Hepsiburada") -> str:
     return f"{base}{sep}{key}={n}"
 
 
+async def trendyol_select_country(page):
+    """Yurt dışı IP'lerde çıkan 'ülke seçin' penceresinde Türkiye'yi seçer."""
+    try:
+        body = await page.inner_text("body")
+    except Exception:
+        return
+    if "select your country" not in body.lower():
+        return
+    print("Trendyol ülke seçimi penceresi bulundu, Türkiye seçiliyor...")
+    for loc in (page.get_by_text("Türkiye", exact=True), page.get_by_role("button", name="Türkiye"),
+                page.locator("text=Türkiye")):
+        try:
+            await loc.first.click(timeout=5000)
+            break
+        except Exception:
+            continue
+    await page.wait_for_timeout(1500)
+    for label in ("Select", "Seç", "Continue", "Devam", "Devam Et", "Alışverişe Başla", "Shop", "Confirm", "Onayla"):
+        try:
+            btn = page.get_by_role("button", name=label, exact=True)
+            if await btn.count():
+                await btn.first.click(timeout=3000)
+                break
+        except Exception:
+            continue
+    await page.wait_for_timeout(2000)
+    try:
+        await page.reload(wait_until="domcontentloaded", timeout=45000)
+    except Exception:
+        pass
+    try:
+        still = "select your country" in (await page.inner_text("body")).lower()
+        print("Ülke seçimi", "BAŞARISIZ" if still else "tamam")
+        if still:
+            DIAG.append("Trendyol: ülke seçimi penceresi geçilemedi")
+    except Exception:
+        pass
+
+
 async def scrape_category(page, name, base_url, site="Hepsiburada"):
     results, seen_count = [], 0
     pages = TRENDYOL_PAGES if site == "Trendyol" else PAGES_PER_CATEGORY
@@ -198,6 +237,8 @@ async def scrape_category(page, name, base_url, site="Hepsiburada"):
         try:
             resp = await page.goto(url, wait_until="domcontentloaded", timeout=45000)
             status = resp.status if resp else "?"
+            if site == "Trendyol":
+                await trendyol_select_country(page)
             try:
                 await page.wait_for_selector("a[href*='-p-'], a[href*='-pm-']", timeout=15000)
             except Exception:
@@ -314,6 +355,7 @@ async def main():
             args=["--disable-blink-features=AutomationControlled"])
         ctx = await browser.new_context(
             locale="tr-TR", timezone_id="Europe/Istanbul",
+            extra_http_headers={"Accept-Language": "tr-TR,tr;q=0.9"},
             viewport={"width": 1366, "height": 900},
             user_agent=("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                         "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"),
