@@ -41,8 +41,8 @@ TRENDYOL_CATEGORIES = {
     "Kadın": "https://www.trendyol.com/butik/liste/1/kadin",
     "Erkek": "https://www.trendyol.com/butik/liste/2/erkek",
 }
-TRENDYOL_PAGES = 2         # Trendyol'da kategori başına sayfa
-TRENDYOL_TESHIS = True     # True iken Trendyol ürünleri gönderilmez, örnek kutular gönderilir
+TRENDYOL_PAGES = 1         # Trendyol'da kategori başına sayfa
+TRENDYOL_TESHIS = False    # True iken Trendyol ürünleri gönderilmez, örnek kutular gönderilir
 SAMPLES = {}               # teşhis için örnek kutular
 TESHIS_MODU = False        # True iken ürün göndermez, örnek kutuların içeriğini gönderir
 MAX_MESSAGES_PER_RUN = 40  # bir çalışmada en fazla kaç ürün gönderilecek
@@ -169,11 +169,12 @@ EXTRACT_JS = r"""
       if (bits.length >= 12) break;
     }
     const q = s => el.querySelector(s);
-    const orig = q('[class*="originalPrice"]')?.innerText || '';
-    const rate = q('[class*="discountRate"]')?.innerText || '';
+    const orig = (q('[class*="originalPrice"]') || q('[class*="current-price__old"]'))?.innerText || '';
+    const rate = (q('[class*="discountRate"]') || q('[class*="price-discount-badge"]'))?.innerText || '';
     const frac = q('[class*="finalPriceFraction"]');
     const fin = q('[class*="finalPrice"]:not([class*="Fraction"])')?.innerText
-                || frac?.parentElement?.innerText || '';
+                || frac?.parentElement?.innerText
+                || q('[class*="current-price__current"]')?.innerText || '';
     const sepet = /Sepete özel/i.test(el.innerText || '');
     out.push({ url: href, title, text: el.innerText || '', bits, orig, rate, fin, sepet });
   }
