@@ -33,6 +33,17 @@ CATEGORIES = {
 
 MIN_DISCOUNT = 30          # yüzde olarak minimum indirim
 PAGES_PER_CATEGORY = 5     # her kategoride kaç sayfa taranacak
+TRENDYOL_CATEGORIES = {
+    "Süpermarket": "https://www.trendyol.com/butik/liste/16/supermarket",
+    "Kozmetik": "https://www.trendyol.com/butik/liste/11/kozmetik",
+    "Ayakkabı & Çanta": "https://www.trendyol.com/butik/liste/9/ayakkabi-canta",
+    "Elektronik": "https://www.trendyol.com/butik/liste/5/elektronik",
+    "Kadın": "https://www.trendyol.com/butik/liste/1/kadin",
+    "Erkek": "https://www.trendyol.com/butik/liste/2/erkek",
+}
+TRENDYOL_PAGES = 2         # Trendyol'da kategori başına sayfa
+TRENDYOL_TESHIS = True     # True iken Trendyol ürünleri gönderilmez, örnek kutular gönderilir
+SAMPLES = {}               # teşhis için örnek kutular
 TESHIS_MODU = False        # True iken ürün göndermez, örnek kutuların içeriğini gönderir
 MAX_MESSAGES_PER_RUN = 40  # bir çalışmada en fazla kaç ürün gönderilecek
 RESEND_AFTER_DAYS = 7      # aynı ürün kaç gün sonra tekrar gönderilebilir
@@ -171,17 +182,19 @@ EXTRACT_JS = r"""
 """
 
 
-def page_url(base: str, n: int) -> str:
+def page_url(base: str, n: int, site: str = "Hepsiburada") -> str:
     if n == 1:
         return base
     sep = "&" if "?" in base else "?"
-    return f"{base}{sep}sayfa={n}"
+    key = "pi" if site == "Trendyol" else "sayfa"
+    return f"{base}{sep}{key}={n}"
 
 
-async def scrape_category(page, name, base_url):
+async def scrape_category(page, name, base_url, site="Hepsiburada"):
     results, seen_count = [], 0
-    for n in range(1, PAGES_PER_CATEGORY + 1):
-        url = page_url(base_url, n)
+    pages = TRENDYOL_PAGES if site == "Trendyol" else PAGES_PER_CATEGORY
+    for n in range(1, pages + 1):
+        url = page_url(base_url, n, site)
         try:
             resp = await page.goto(url, wait_until="domcontentloaded", timeout=45000)
             status = resp.status if resp else "?"
@@ -213,6 +226,10 @@ async def scrape_category(page, name, base_url):
             print(f"[{name}] HTTP {status} | başlık: {title} | metin: {body}")
             DIAG.append(f"{name}: HTTP {status} | {title} | {body}")
             break
+        if site == "Trendyol" and TRENDYOL_TESHIS:
+            SAMPLES.setdefault(name, cards[:2])
+            await page.wait_for_timeout(random.randint(3000, 6000))
+            continue
         for c in cards:
             old, new, disc = analyze_fields(c)
             if disc >= MIN_DISCOUNT and disc < 95:
@@ -305,10 +322,32 @@ async def main():
             "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
         page = await ctx.new_page()
         for name, url in cats.items():
-            items, count = await scrape_category(page, name, url)
+            items, count = await scrape_category(page, f"Hepsiburada · {name}", url)
             total_seen += count
             found += items
+        ty_counts = {}
+        manual = os.environ.get("GITHUB_EVENT_NAME", "workflow_dispatch") == "workflow_dispatch"
+        for name, url in TRENDYOL_CATEGORIES.items():
+            if not url.startswith("http"):
+                continue
+            if TRENDYOL_TESHIS and not manual:  # teşhis sadece elle çalıştırmada
+                continue
+            full = f"Trendyol · {name}"
+            items, count = await scrape_category(page, full, url, site="Trendyol")
+            ty_counts[full] = count
+            found += items
         await browser.close()
+
+    if TRENDYOL_TESHIS and ty_counts:
+        lines = [f"{k}: {v} ürün okundu" for k, v in ty_counts.items()]
+        lines += [d for d in DIAG if d.startswith("Trendyol")]
+        send_telegram("🔧 Trendyol teşhis:\n\n" + html.escape("\n".join(lines)))
+        for name, cards in list(SAMPLES.items())[:3]:
+            for c in cards[:1]:
+                msg = (f"{name}\n{c['url']}\n\nKUTU METNİ:\n{c['text'][:900]}"
+                       f"\n\nFİYAT ALANLARI:\n" + "\n".join(c.get("bits", [])))
+                send_telegram(html.escape(msg[:3800]))
+                time.sleep(1.2)
 
     if TESHIS_MODU:
         print(f"Teşhis modu: {len(found)} ürün indirimli sanıldı.")
