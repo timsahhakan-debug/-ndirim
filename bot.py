@@ -192,12 +192,10 @@ def page_url(base: str, n: int, site: str = "Hepsiburada") -> str:
 
 async def trendyol_select_country(page):
     """Yurt dışı IP'lerde çıkan 'ülke seçin' penceresinde Türkiye'yi seçer."""
-    try:
-        body = await page.inner_text("body")
+    try:  # pencere JavaScript ile birkaç saniye sonra açılıyor, bekle
+        await page.wait_for_selector("text=/select your country/i", timeout=8000)
     except Exception:
-        return
-    if "select your country" not in body.lower():
-        return
+        return  # pencere çıkmadı
     print("Trendyol ülke seçimi penceresi bulundu, Türkiye seçiliyor...")
     for loc in (page.get_by_text("Türkiye", exact=True), page.get_by_role("button", name="Türkiye"),
                 page.locator("text=Türkiye")):
@@ -221,10 +219,18 @@ async def trendyol_select_country(page):
     except Exception:
         pass
     try:
-        still = "select your country" in (await page.inner_text("body")).lower()
+        try:
+            await page.wait_for_selector("text=/select your country/i", timeout=6000)
+            still = True
+        except Exception:
+            still = False
         print("Ülke seçimi", "BAŞARISIZ" if still else "tamam")
         if still:
-            DIAG.append("Trendyol: ülke seçimi penceresi geçilemedi")
+            buttons = await page.evaluate("""() => [...document.querySelectorAll('button, a, [role=button], li, label')]
+                .filter(e => /türkiye|turkey|select|seç|continue|devam/i.test(e.innerText || ''))
+                .slice(0, 8)
+                .map(e => e.tagName + '.' + (e.className || '').toString().slice(0, 40) + ' = ' + (e.innerText || '').trim().slice(0, 40))""")
+            DIAG.append("Trendyol: ülke seçimi geçilemedi. Butonlar: " + " | ".join(buttons))
     except Exception:
         pass
 
@@ -360,6 +366,10 @@ async def main():
             user_agent=("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                         "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"),
         )
+        await ctx.add_cookies([
+            {"name": n, "value": v, "domain": ".trendyol.com", "path": "/"}
+            for n, v in (("countryCode", "TR"), ("storefrontId", "1"), ("language", "tr"))
+        ])
         await ctx.add_init_script(
             "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
         page = await ctx.new_page()
