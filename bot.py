@@ -22,19 +22,6 @@ from playwright.async_api import async_playwright
 # tarayıcının adres çubuğundan kopyalayarak buraya yapıştır.
 # Örnek görünüm: https://www.hepsiburada.com/xxxxx-c-123456
 CATEGORIES = {
-    "Bilgisayar": "https://www.hepsiburada.com/bilgisayar-sistemleri-ve-ekipmanlari-c-2147483646",
-    "Süpermarket": "https://www.hepsiburada.com/supermarket-c-2147483619",
-    "Kozmetik": "https://www.hepsiburada.com/kozmetik-c-2147483603",
-    "Kişisel Bakım": "https://www.hepsiburada.com/saglik-kisisel-bakim-urunleri-c-2147483633",
-    "Yapı Market": "https://www.hepsiburada.com/yapi-market-hirdavatlar-c-2147483620",
-    "Oto Aksesuar": "https://www.hepsiburada.com/oto-aksesuarlari-c-2147483631",
-    "Giyim & Ayakkabı": "https://www.hepsiburada.com/giyim-ayakkabi-c-2147483636",
-}
-
-MIN_DISCOUNT = 30          # yüzde olarak minimum indirim
-PAGES_PER_CATEGORY = 3     # her kategoride kaç sayfa taranacak
-# Hepsiburada alt kategorileri (daha az sayfa taranır)
-HB_SUB_CATEGORIES = {
     "Deterjan & Temizlik": "https://www.hepsiburada.com/deterjan-temizlik-urunleri-c-28001525",
     "Bebek Bezi": "https://www.hepsiburada.com/bebek-bezi-c-60001048",
     "Kağıt Ürünleri": "https://www.hepsiburada.com/kagit-urunleri-c-28001547",
@@ -49,7 +36,34 @@ HB_SUB_CATEGORIES = {
     "Saç Bakım": "https://www.hepsiburada.com/sac-bakim-urunleri-c-26012111",
     "Epilasyon & Ağda": "https://www.hepsiburada.com/epilasyon-agda-c-80216049",
     "Deodorant": "https://www.hepsiburada.com/deodorantlar-c-26012112",
+    "Telefon Aksesuarları": "https://www.hepsiburada.com/cep-telefonu-aksesuarlari-c-371967",
+    "Bluetooth Kulaklık": "https://www.hepsiburada.com/bluetooth-kulakliklar-c-16218",
+    "Powerbank": "https://www.hepsiburada.com/tasinabilir-pilli-sarj-cihazlari-c-60004584",
+    "Akıllı Saat": "https://www.hepsiburada.com/akilli-saatler-c-60003676",
+    "Şarj Cihazları": "https://www.hepsiburada.com/sarj-cihazlari-c-16113",
+    "Telefon Kabloları": "https://www.hepsiburada.com/telefon-kablolari-c-29010123",
+    "Taşınabilir Hoparlör": "https://www.hepsiburada.com/tasinabilir-hoparlorler-c-376097",
+    "Robot Süpürge": "https://www.hepsiburada.com/robot-supurge-c-80160033",
+    "Saç Şekillendirme": "https://www.hepsiburada.com/sac-sekillendirme-cihazlari-c-26012129",
+    "Elektrikli Mutfak Aletleri": "https://www.hepsiburada.com/elektrikli-mutfak-aletleri-c-22001",
+    "Mutfak Gereçleri": "https://www.hepsiburada.com/mutfak-gerecleri-c-22500",
+    "Aydınlatma": "https://www.hepsiburada.com/elektrik-aydinlatma-urunleri-c-13003201",
+    "Elektrikli Aletler": "https://www.hepsiburada.com/elektrikli-aletler-aksesuarlar-c-13003081",
+    "Hırdavat": "https://www.hepsiburada.com/hirdavat-urunleri-c-13003347",
+    "Elektrik Tesisat": "https://www.hepsiburada.com/elektrik-tesisat-malzemeleri-c-80571082",
+    "Oto Aksesuar": "https://www.hepsiburada.com/oto-aksesuar-urunleri-c-253574",
+    "Oto Ses & Görüntü": "https://www.hepsiburada.com/oto-ses-goruntu-sistemleri-c-253575",
+    "Oto Yedek Parça": "https://www.hepsiburada.com/oto-yedek-parcalar-c-20003812",
+    "Kadın Giyim": "https://www.hepsiburada.com/bayan-giyim-modelleri-c-12087178",
+    "Erkek Giyim": "https://www.hepsiburada.com/erkek-giyim-modelleri-c-12087177",
+    "Erkek Kol Saati": "https://www.hepsiburada.com/erkek-kol-saatleri-c-25008404",
+    "Kadın Kol Saati": "https://www.hepsiburada.com/bayan-kol-saatleri-c-25008405",
 }
+
+MIN_DISCOUNT = 30          # yüzde olarak minimum indirim
+PAGES_PER_CATEGORY = 3     # her kategoride kaç sayfa taranacak
+# Hepsiburada alt kategorileri (daha az sayfa taranır)
+HB_SUB_CATEGORIES = {}  # artık tüm kategoriler yukarıda
 HB_SUB_PAGES = 2
 
 TRENDYOL_CATEGORIES = {
