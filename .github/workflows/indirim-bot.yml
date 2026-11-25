@@ -24,7 +24,8 @@ jobs:
           - { key: hb1,      site: Hepsiburada, shard: "1/2" }
           - { key: hb2,      site: Hepsiburada, shard: "2/2" }
           - { key: trendyol, site: Trendyol,    shard: "1/1" }
-          - { key: n11,      site: N11,         shard: "1/1" }
+          - { key: n11a,     site: N11,         shard: "1/2" }
+          - { key: n11b,     site: N11,         shard: "2/2" }
     steps:
       - uses: actions/checkout@v5
 
