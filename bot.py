@@ -96,7 +96,7 @@ N11_CATEGORIES = {
     "Oto Aksesuar & Tuning": "https://www.n11.com/aksesuar-ve-tuning",
 }
 N11_PAGES = 1              # N11'de kategori başına sayfa
-N11_TESHIS = True          # True iken N11 ürünleri gönderilmez, örnek kutular gönderilir
+N11_TESHIS = False         # True iken N11 ürünleri gönderilmez, örnek kutular gönderilir
 
 SITE_PAGES = {"Trendyol": TRENDYOL_PAGES, "N11": N11_PAGES}
 SITE_TESHIS = {"Trendyol": TRENDYOL_TESHIS, "N11": N11_TESHIS}
@@ -233,13 +233,16 @@ EXTRACT_JS = r"""
       if (bits.length >= 12) break;
     }
     const q = s => el.querySelector(s);
-    const orig = (q('[class*="originalPrice"]') || q('[class*="current-price__old"]'))?.innerText || '';
+    const isN11 = location.hostname.includes('n11.com');
+    const orig = (q('[class*="originalPrice"]') || q('[class*="current-price__old"]')
+                  || (isN11 ? q('.price') : null))?.innerText || '';
     const rate = (q('[class*="discountRate"]') || q('[class*="price-discount-badge"]'))?.innerText || '';
     const frac = q('[class*="finalPriceFraction"]');
     const fin = q('[class*="finalPrice"]:not([class*="Fraction"])')?.innerText
                 || frac?.parentElement?.innerText
-                || q('[class*="current-price__current"]')?.innerText || '';
-    const sepet = /Sepete özel/i.test(el.innerText || '');
+                || q('[class*="current-price__current"]')?.innerText
+                || (isN11 ? q('.price-currency')?.innerText : '') || '';
+    const sepet = /Sepete özel|SEPETTE/i.test(el.innerText || '');
     out.push({ url: href, title, text: el.innerText || '', bits, orig, rate, fin, sepet });
   }
   return out;
@@ -308,6 +311,11 @@ async def scrape_category(page, name, base_url, site="Hepsiburada", pages=None):
         try:
             resp = await page.goto(url, wait_until="domcontentloaded", timeout=45000)
             status = resp.status if resp else "?"
+            if status == 403:  # güvenlik engeli: bir kez bekleyip tekrar dene
+                print(f"[{name}] 403, bekleyip tekrar deneniyor...")
+                await page.wait_for_timeout(random.randint(15000, 25000))
+                resp = await page.goto(url, wait_until="domcontentloaded", timeout=45000)
+                status = resp.status if resp else "?"
             if site == "Trendyol":
                 await trendyol_select_country(page)
             try:
