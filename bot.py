@@ -32,7 +32,26 @@ CATEGORIES = {
 }
 
 MIN_DISCOUNT = 30          # yüzde olarak minimum indirim
-PAGES_PER_CATEGORY = 5     # her kategoride kaç sayfa taranacak
+PAGES_PER_CATEGORY = 3     # her kategoride kaç sayfa taranacak
+# Hepsiburada alt kategorileri (daha az sayfa taranır)
+HB_SUB_CATEGORIES = {
+    "Deterjan & Temizlik": "https://www.hepsiburada.com/deterjan-temizlik-urunleri-c-28001525",
+    "Bebek Bezi": "https://www.hepsiburada.com/bebek-bezi-c-60001048",
+    "Kağıt Ürünleri": "https://www.hepsiburada.com/kagit-urunleri-c-28001547",
+    "İçecek": "https://www.hepsiburada.com/icecek-urunleri-c-28001517",
+    "Gıda": "https://www.hepsiburada.com/gida-urunleri-c-28001469",
+    "Mutfak Sarf Malzemeleri": "https://www.hepsiburada.com/mutfak-sarf-malzemeleri-c-60001205",
+    "Parfüm": "https://www.hepsiburada.com/parfumler-c-341406",
+    "Cilt Bakım": "https://www.hepsiburada.com/cilt-bakim-urunleri-c-32000005",
+    "Ağız Bakım": "https://www.hepsiburada.com/agiz-bakim-urunleri-c-26012110",
+    "Erkek Tıraş": "https://www.hepsiburada.com/erkek-tiras-urunleri-c-26012116",
+    "Duş Jeli": "https://www.hepsiburada.com/dus-jelleri-c-26012356",
+    "Saç Bakım": "https://www.hepsiburada.com/sac-bakim-urunleri-c-26012111",
+    "Epilasyon & Ağda": "https://www.hepsiburada.com/epilasyon-agda-c-80216049",
+    "Deodorant": "https://www.hepsiburada.com/deodorantlar-c-26012112",
+}
+HB_SUB_PAGES = 2
+
 TRENDYOL_CATEGORIES = {
     "Süpermarket": "https://www.trendyol.com/butik/liste/16/supermarket",
     "Kozmetik": "https://www.trendyol.com/butik/liste/11/kozmetik",
@@ -261,9 +280,9 @@ async def trendyol_select_country(page):
         pass
 
 
-async def scrape_category(page, name, base_url, site="Hepsiburada"):
+async def scrape_category(page, name, base_url, site="Hepsiburada", pages=None):
     results, seen_count = [], 0
-    pages = SITE_PAGES.get(site, PAGES_PER_CATEGORY)
+    pages = pages or SITE_PAGES.get(site, PAGES_PER_CATEGORY)
     for n in range(1, pages + 1):
         url = page_url(base_url, n, site)
         try:
@@ -401,6 +420,10 @@ async def main():
         page = await ctx.new_page()
         for name, url in cats.items():
             items, count = await scrape_category(page, f"Hepsiburada · {name}", url)
+            total_seen += count
+            found += items
+        for name, url in HB_SUB_CATEGORIES.items():
+            items, count = await scrape_category(page, f"Hepsiburada · {name}", url, pages=HB_SUB_PAGES)
             total_seen += count
             found += items
         site_counts = {}
