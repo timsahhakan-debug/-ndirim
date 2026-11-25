@@ -811,8 +811,17 @@ async def main():
             found = passed
             print("En düşük fiyat kontrolü:\n" + "\n".join(akakce_report))
             if manual and akakce_report:
-                send_telegram("📊 En düşük fiyat kontrolü (" + html.escape(JOB_KEY or "tümü") + "):\n\n"
-                              + html.escape("\n".join(akakce_report))[:3700])
+                head = "📊 En düşük fiyat kontrolü (" + html.escape(JOB_KEY or "tümü") + ")"
+                chunk, part = [], 1
+                for line in akakce_report + [None]:
+                    if line is None or sum(len(x) + 1 for x in chunk) + len(line) > 3300:
+                        if chunk:
+                            send_telegram(f"{head} [{part}]:\n\n" + html.escape("\n".join(chunk)))
+                            part += 1
+                            time.sleep(1.2)
+                        chunk = []
+                    if line is not None:
+                        chunk.append(line)
         elif AKAKCE_FILTRE:
             found = []
         update_history(hist, today)
