@@ -475,21 +475,27 @@ async def akakce_probe(page, candidates):
 
 LOWPRICE_JS = r"""
 () => {
-  const vals = [];
+  // Sadece sayfanın ana ürününün (Product) fiyatını al; 0 ve geçersiz değerleri yok say
+  const num = v => { const n = parseFloat(v); return isFinite(n) && n > 0 ? n : null; };
+  const products = [];
+  const walk = o => {
+    if (!o || typeof o !== 'object') return;
+    if (Array.isArray(o)) return o.forEach(walk);
+    const tp = [].concat(o['@type'] || []);
+    if (tp.includes('Product')) products.push(o);
+    Object.values(o).forEach(walk);
+  };
   for (const s of document.querySelectorAll('script[type="application/ld+json"]')) {
-    try {
-      const walk = o => {
-        if (!o || typeof o !== 'object') return;
-        if (Array.isArray(o)) return o.forEach(walk);
-        for (const k of ['lowPrice', 'price']) {
-          if (o[k] !== undefined && !isNaN(parseFloat(o[k]))) vals.push(parseFloat(o[k]));
-        }
-        Object.values(o).forEach(walk);
-      };
-      walk(JSON.parse(s.textContent));
-    } catch (e) {}
+    try { walk(JSON.parse(s.textContent)); } catch (e) {}
   }
-  return vals.length ? Math.min(...vals) : null;
+  for (const p of products) {
+    const offers = [].concat(p.offers || []);
+    for (const of of offers) {
+      const v = num(of.lowPrice) ?? num(of.price);
+      if (v) return v;
+    }
+  }
+  return null;
 }
 """
 
@@ -497,8 +503,9 @@ LOWPRICE_JS = r"""
 async def akakce_check(page, p):
     """Ürünü Akakçe'de kontrol eder. Döner: (geçti_mi, sebep, akakçe_en_ucuz)"""
     sc, best = await akakce_find(page, p["title"])
-    if not best or sc < 0.55:
-        return False, "eşleşme yok", None
+    short = len(norm_tokens(p["title"])) <= 6        # kısa/genel başlıklar
+    if not best or sc < (0.8 if short else 0.55):
+        return False, "eşleşme yok" + (" (başlık çok genel)" if short and best and sc >= 0.55 else ""), None
     await page.goto(best["h"], wait_until="domcontentloaded", timeout=45000)
     await page.wait_for_timeout(2000)
     for _ in range(12):
