@@ -233,8 +233,9 @@ EXTRACT_JS = r"""
     const badge = /en çok|satan|kargo|sepetinde|kaçırma|kupon|teslimat|tl\b|^\d|^\(|puan|indirim|fırsat|yeni/i;
     const lines = (a.innerText || el.innerText || '').split('\n').map(s => s.trim())
       .filter(s => s.length >= 12 && !badge.test(s));
-    const title = (a.getAttribute('title') || el.querySelector('h2, h3')?.innerText
-                   || lines[0] || a.innerText.split('\n')[0] || '').trim();
+    const cands = [a.getAttribute('title'), ...[...el.querySelectorAll('h2, h3')].map(h => h.innerText), ...lines]
+      .map(s => (s || '').trim()).filter(s => s.length >= 8 && !badge.test(s));
+    const title = (cands[0] || a.innerText.split('\n')[0] || '').trim();
     const bits = [];
     for (const x of el.querySelectorAll('*')) {
       if (x.children.length) continue;
