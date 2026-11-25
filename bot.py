@@ -339,10 +339,13 @@ def match_score(ours: str, theirs: str) -> float:
     a, b = norm_tokens(ours), norm_tokens(theirs)
     if not a or not b:
         return 0.0
-    nums = {x for x in a if re.search(r"\d", x)}
-    if nums and not nums <= b:          # sayılar (ml, adet, kapsül) tutmalı
+    unit = re.compile(r"^\d+(ml|gr|g|kg|lt|l|adet|kapsul|tablet|li|lu|x|cm|mm|mah|w|v|lt)$|^x\d+$")
+    nums = {x for x in a if unit.match(x)}
+    if nums and not nums <= b:          # ölçü sayıları (ml, adet, kapsül) tutmalı
         return 0.0
-    return len(a & b) / len(a | b)
+    a2 = {x for x in a if not re.fullmatch(r"\d{5,}", x)}   # uzun ürün kodlarını sayma
+    b2 = {x for x in b if not re.fullmatch(r"\d{5,}", x)}
+    return len(a2 & b2) / max(1, len(a2 | b2))
 
 
 PERIOD_JS = r"""
@@ -490,7 +493,7 @@ LOWPRICE_JS = r"""
 async def akakce_check(page, p):
     """Ürünü Akakçe'de kontrol eder. Döner: (geçti_mi, sebep, akakçe_en_ucuz)"""
     sc, best = await akakce_find(page, p["title"])
-    if not best or sc < 0.45:
+    if not best or sc < 0.55:
         return False, "eşleşme yok", None
     await page.goto(best["h"], wait_until="domcontentloaded", timeout=45000)
     await page.wait_for_timeout(2000)
@@ -501,17 +504,29 @@ async def akakce_check(page, p):
     low = await page.evaluate(LOWPRICE_JS)
     if not await page.evaluate(SECTION_JS):
         return False, "fiyat geçmişi yok", low
+    def sentence(s):
+        m = re.search(r"Bu (ürün|fiyat)[^\n.]*\.?", s or "")
+        return m.group(0) if m else "(cümle yok)"
+    before = sentence((await page.evaluate(SECTION_JS) or {"text": ""})["text"])
+    clicked = False
     try:
-        await page.get_by_text("6A", exact=True).first.click(timeout=5000)
-        await page.wait_for_timeout(2000)
+        for loc in await page.get_by_text("6A", exact=True).all():
+            if await loc.is_visible():
+                await loc.scroll_into_view_if_needed(timeout=3000)
+                await loc.click(timeout=4000)
+                clicked = True
+                break
     except Exception:
-        return False, "6A seçilemedi", low
+        pass
+    if not clicked:
+        return False, f"6A tıklanamadı | önce: {before}", low
+    await page.wait_for_timeout(2500)
     sec = await page.evaluate(SECTION_JS) or {"text": ""}
-    txt = sec["text"]
+    txt = sentence(sec["text"])
     if re.search(r"son 6 ay\w*\s+(içinde\s+)?daha düşük", txt, re.I):
         return False, "6 ayda daha düşük görmüş", low
     if not re.search(r"son 6 ay\w*\s+en ucuz", txt, re.I):
-        return False, "6 ay cümlesi okunamadı: " + txt.replace("\n", " ")[:80], low
+        return False, f"cümle uymadı | önce: {before} | sonra: {txt}", low
     if low is None:
         return False, "Akakçe fiyatı okunamadı", low
     if p["new"] and p["new"] > low * AKAKCE_TOLERANS:
