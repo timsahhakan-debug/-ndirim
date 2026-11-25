@@ -113,9 +113,15 @@ CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 # Birden fazla alıcı: virgülle ayır (örn. "2041320927,123456789,@kanaladi")
 CHAT_IDS = [c.strip() for c in CHAT_ID.split(",") if c.strip()]
 DRY_RUN = os.environ.get("DRY_RUN") == "1"  # 1 ise Telegram'a göndermez, ekrana yazar
-STATE_FILE = Path(__file__).parent / "sent.json"
+# Paralel çalışma: her iş kendi sitesini/parçasını tarar ve kendi kaydını tutar
+SITE = os.environ.get("SITE", "")            # "", "Hepsiburada", "Trendyol", "N11"
+SHARD = os.environ.get("SHARD", "1/1")       # örn. "1/2"
+JOB_KEY = os.environ.get("JOB_KEY", "")      # örn. "hb1"
+_SUFFIX = f"_{JOB_KEY}" if JOB_KEY else ""
+STATE_FILE = Path(__file__).parent / f"sent{_SUFFIX}.json"
+LEGACY_STATE = Path(__file__).parent / "sent.json"
 DEBUG_DIR = Path(__file__).parent / "debug"
-STATUS_FILE = Path(__file__).parent / "durum.json"  # arka arkaya engellenme sayısı
+STATUS_FILE = Path(__file__).parent / f"durum{_SUFFIX}.json"  # arka arkaya engellenme sayısı
 DIAG = []  # teşhis bilgileri
 
 PRICE_RE = re.compile(r"(\d{1,3}(?:\.\d{3})*(?:,\d{1,2})?)\s*TL")
@@ -388,7 +394,8 @@ def format_message(p) -> str:
 
 def load_state():
     try:
-        data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+        src = STATE_FILE if STATE_FILE.exists() else LEGACY_STATE
+        data = json.loads(src.read_text(encoding="utf-8"))
     except Exception:
         data = {}
     cutoff = time.time() - RESEND_AFTER_DAYS * 86400
@@ -407,9 +414,24 @@ async def main():
         ok = send_telegram("✅ Bot bağlantısı çalışıyor!")
         sys.exit(0 if ok else 1)
 
-    cats = {k: v for k, v in CATEGORIES.items() if v.startswith("http")}
-    if not cats:
-        sys.exit("bot.py içindeki CATEGORIES listesine kategori linklerini yapıştırmalısın.")
+    manual = os.environ.get("GITHUB_EVENT_NAME", "workflow_dispatch") == "workflow_dispatch"
+    jobs = []  # (site, görünen ad, link, sayfa)
+    for name, url in CATEGORIES.items():
+        jobs.append(("Hepsiburada", name, url, PAGES_PER_CATEGORY))
+    for name, url in HB_SUB_CATEGORIES.items():
+        jobs.append(("Hepsiburada", name, url, HB_SUB_PAGES))
+    for site, cats_ in (("Trendyol", TRENDYOL_CATEGORIES), ("N11", N11_CATEGORIES)):
+        if SITE_TESHIS.get(site) and not manual:  # teşhis sadece elle çalıştırmada
+            continue
+        for name, url in cats_.items():
+            jobs.append((site, name, url, SITE_PAGES.get(site, 1)))
+    jobs = [j for j in jobs if j[2].startswith("http") and (not SITE or j[0] == SITE)]
+    k, n_shards = (int(x) for x in SHARD.split("/"))
+    jobs = [j for i, j in enumerate(jobs) if i % n_shards == k - 1]
+    if not jobs:
+        print("Bu iş için taranacak kategori yok.")
+        return
+    print(f"{len(jobs)} kategori taranacak ({SITE or 'tüm siteler'}, parça {SHARD}).")
 
     state = load_state()
     found, total_seen = [], 0
@@ -432,26 +454,13 @@ async def main():
         await ctx.add_init_script(
             "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
         page = await ctx.new_page()
-        for name, url in cats.items():
-            items, count = await scrape_category(page, f"Hepsiburada · {name}", url)
-            total_seen += count
-            found += items
-        for name, url in HB_SUB_CATEGORIES.items():
-            items, count = await scrape_category(page, f"Hepsiburada · {name}", url, pages=HB_SUB_PAGES)
-            total_seen += count
-            found += items
         site_counts = {}
-        manual = os.environ.get("GITHUB_EVENT_NAME", "workflow_dispatch") == "workflow_dispatch"
-        for site, cats_ in (("Trendyol", TRENDYOL_CATEGORIES), ("N11", N11_CATEGORIES)):
-            if SITE_TESHIS.get(site) and not manual:  # teşhis sadece elle çalıştırmada
-                continue
-            for name, url in cats_.items():
-                if not url.startswith("http"):
-                    continue
-                full = f"{site} · {name}"
-                items, count = await scrape_category(page, full, url, site=site)
-                site_counts[full] = count
-                found += items
+        for site, name, url, pages in jobs:
+            full = f"{site} · {name}"
+            items, count = await scrape_category(page, full, url, site=site, pages=pages)
+            total_seen += count
+            site_counts[full] = count
+            found += items
         await browser.close()
 
     for site in ("Trendyol", "N11"):
@@ -501,10 +510,11 @@ async def main():
         print(f"Erişim engellendi ({n}. kez arka arkaya).")
         if n == 3 or (n > 3 and (n - 3) % 24 == 0):
             detail = "\n\n".join(html.escape(d) for d in DIAG[:6])
-            send_telegram(f"⚠️ Hepsiburada'ya {n} çalışmadır arka arkaya erişilemiyor. Teşhis:\n\n" + detail)
+            who = SITE or "Siteler"
+            send_telegram(f"⚠️ {who} ({JOB_KEY or 'tümü'}) {n} çalışmadır arka arkaya okunamıyor. Teşhis:\n\n" + detail)
     else:
         if status.get("engel", 0) >= 3:
-            send_telegram("✅ Hepsiburada erişimi tekrar sağlandı.")
+            send_telegram(f"✅ {SITE or 'Site'} erişimi tekrar sağlandı.")
         status["engel"] = 0
     STATUS_FILE.write_text(json.dumps(status), encoding="utf-8")
 
