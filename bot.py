@@ -101,7 +101,10 @@ N11_TESHIS = False         # True iken N11 ürünleri gönderilmez, örnek kutul
 SITE_PAGES = {"Trendyol": TRENDYOL_PAGES, "N11": N11_PAGES}
 SITE_TESHIS = {"Trendyol": TRENDYOL_TESHIS, "N11": N11_TESHIS}
 SITE_PAGE_KEY = {"Hepsiburada": "sayfa", "Trendyol": "pi", "N11": "pg"}
-AKAKCE_TESHIS = True       # elle çalıştırmada Akakçe sayfa yapısını incele
+AKAKCE_TESHIS = False      # eski teşhis (kapalı)
+AKAKCE_FILTRE = True       # sadece Akakçe'ye göre son 6 ayın en düşük fiyatındaki ürünleri gönder
+AKAKCE_MAX_KONTROL = 25    # her işte, her çalışmada Akakçe'de en fazla kaç ürün kontrol edilsin
+AKAKCE_TOLERANS = 1.01     # fiyatımız Akakçe'deki en ucuzdan en fazla %1 yüksek olabilir
 SAMPLES = {}               # teşhis için örnek kutular
 TESHIS_MODU = False        # True iken ürün göndermez, örnek kutuların içeriğini gönderir
 MAX_MESSAGES_PER_RUN = 40  # bir çalışmada en fazla kaç ürün gönderilecek
@@ -122,7 +125,8 @@ _SUFFIX = f"_{JOB_KEY}" if JOB_KEY else ""
 STATE_FILE = Path(__file__).parent / f"sent{_SUFFIX}.json"
 LEGACY_STATE = Path(__file__).parent / "sent.json"
 DEBUG_DIR = Path(__file__).parent / "debug"
-STATUS_FILE = Path(__file__).parent / f"durum{_SUFFIX}.json"  # arka arkaya engellenme sayısı
+STATUS_FILE = Path(__file__).parent / f"durum{_SUFFIX}.json"
+AKAKCE_CACHE_FILE = Path(__file__).parent / f"akakce{_SUFFIX}.json"  # Akakçe sonuç önbelleği  # arka arkaya engellenme sayısı
 DIAG = []  # teşhis bilgileri
 
 PRICE_RE = re.compile(r"(\d{1,3}(?:\.\d{3})*(?:,\d{1,2})?)\s*TL")
@@ -462,6 +466,92 @@ async def akakce_probe(page, candidates):
     return "\n".join(out)
 
 
+LOWPRICE_JS = r"""
+() => {
+  const vals = [];
+  for (const s of document.querySelectorAll('script[type="application/ld+json"]')) {
+    try {
+      const walk = o => {
+        if (!o || typeof o !== 'object') return;
+        if (Array.isArray(o)) return o.forEach(walk);
+        for (const k of ['lowPrice', 'price']) {
+          if (o[k] !== undefined && !isNaN(parseFloat(o[k]))) vals.push(parseFloat(o[k]));
+        }
+        Object.values(o).forEach(walk);
+      };
+      walk(JSON.parse(s.textContent));
+    } catch (e) {}
+  }
+  return vals.length ? Math.min(...vals) : null;
+}
+"""
+
+
+async def akakce_check(page, p):
+    """Ürünü Akakçe'de kontrol eder. Döner: (geçti_mi, sebep, akakçe_en_ucuz)"""
+    sc, best = await akakce_find(page, p["title"])
+    if not best or sc < 0.45:
+        return False, "eşleşme yok", None
+    await page.goto(best["h"], wait_until="domcontentloaded", timeout=45000)
+    await page.wait_for_timeout(2000)
+    for _ in range(12):
+        await page.mouse.wheel(0, 1500)
+        await page.wait_for_timeout(400)
+    await page.wait_for_timeout(1000)
+    low = await page.evaluate(LOWPRICE_JS)
+    if not await page.evaluate(SECTION_JS):
+        return False, "fiyat geçmişi yok", low
+    try:
+        await page.get_by_text("6A", exact=True).first.click(timeout=5000)
+        await page.wait_for_timeout(2000)
+    except Exception:
+        return False, "6A seçilemedi", low
+    sec = await page.evaluate(SECTION_JS) or {"text": ""}
+    txt = sec["text"]
+    if re.search(r"son 6 ay\w*\s+(içinde\s+)?daha düşük", txt, re.I):
+        return False, "6 ayda daha düşük görmüş", low
+    if not re.search(r"son 6 ay\w*\s+en ucuz", txt, re.I):
+        return False, "6 ay cümlesi okunamadı: " + txt.replace("\n", " ")[:80], low
+    if low is None:
+        return False, "Akakçe fiyatı okunamadı", low
+    if p["new"] and p["new"] > low * AKAKCE_TOLERANS:
+        return False, f"Akakçe'de daha ucuz ({fmt_price(low)} TL)", low
+    return True, "6 ayın en düşüğü", low
+
+
+async def akakce_filter(page, cands, report):
+    """Adayları Akakçe ile süzer; önbellek kullanır (24 saat)."""
+    try:
+        cache = json.loads(AKAKCE_CACHE_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        cache = {}
+    now = time.time()
+    cache = {k: v for k, v in cache.items() if now - v.get("t", 0) < 86400}
+    passed, checked = [], 0
+    for p in cands:
+        key = p["url"]
+        c = cache.get(key)
+        if c and c.get("price") == p["new"]:
+            ok, why, low = c["ok"], c["why"] + " (önbellek)", c.get("low")
+        else:
+            if checked >= AKAKCE_MAX_KONTROL:
+                continue  # sonraki çalışmada kontrol edilir
+            checked += 1
+            try:
+                ok, why, low = await akakce_check(page, p)
+            except Exception as e:
+                ok, why, low = False, f"hata: {str(e)[:60]}", None
+            cache[key] = {"ok": ok, "why": why, "low": low, "price": p["new"], "t": now}
+            await page.wait_for_timeout(random.randint(1500, 3000))
+        report.append(f"{'✅' if ok else '✗'} {p['title'][:45]} | bizde {fmt_price(p['new'] or 0)} | "
+                      f"Akakçe {fmt_price(low) if low else '-'} | {why}")
+        if ok:
+            p["akakce_low"] = low
+            passed.append(p)
+    AKAKCE_CACHE_FILE.write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")
+    return passed
+
+
 async def scrape_category(page, name, base_url, site="Hepsiburada", pages=None):
     results, seen_count = [], 0
     pages = pages or SITE_PAGES.get(site, PAGES_PER_CATEGORY)
@@ -555,6 +645,8 @@ def format_message(p) -> str:
                      + (" (sepette)" if p.get("sepet") else ""))
     elif p["new"]:
         lines.append(f"<b>{fmt_price(p['new'])} TL</b>")
+    if p.get("akakce_low"):
+        lines.append("📉 Son 6 ayın en düşük fiyatı (Akakçe)")
     lines.append(p["url"])
     return "\n".join(lines)
 
@@ -628,6 +720,19 @@ async def main():
             total_seen += count
             site_counts[full] = count
             found += items
+        state_pre = load_state()
+        uniq_pre = {}
+        for p in sorted(found, key=lambda p: -p["disc"]):
+            if p["url"] not in state_pre and p["url"] not in uniq_pre:
+                uniq_pre[p["url"]] = p
+        akakce_report = []
+        if AKAKCE_FILTRE and uniq_pre:
+            passed = await akakce_filter(page, list(uniq_pre.values()), akakce_report)
+            found = passed
+            print("Akakçe:\n" + "\n".join(akakce_report))
+            if manual and akakce_report:
+                send_telegram("📊 Akakçe kontrolü (" + html.escape(JOB_KEY or "tümü") + "):\n\n"
+                              + html.escape("\n".join(akakce_report))[:3700])
         if AKAKCE_TESHIS and manual and found:
             cands = sorted(found, key=lambda p: -p["disc"])
             report = await akakce_probe(page, cands)
