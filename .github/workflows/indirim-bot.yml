@@ -38,6 +38,13 @@ jobs:
           pip install -r requirements.txt
           python -m playwright install --with-deps chromium
 
+      - name: Fiyat geçmişini geri yükle
+        uses: actions/cache/restore@v4
+        with:
+          path: history
+          key: fiyat-${{ matrix.key }}-${{ github.run_id }}
+          restore-keys: fiyat-${{ matrix.key }}-
+
       - name: Botu çalıştır
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -46,6 +53,14 @@ jobs:
           SHARD: ${{ matrix.shard }}
           JOB_KEY: ${{ matrix.key }}
         run: python bot.py
+
+      - name: Fiyat geçmişini kaydet
+        if: always()
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: history
+          key: fiyat-${{ matrix.key }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Teşhis dosyalarını yükle
         if: always()
