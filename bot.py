@@ -222,8 +222,11 @@ EXTRACT_JS = r"""
       .map(x => x.href.split('?')[0].split('#')[0]).filter(isProduct));
     if (others.size > 1) continue;  // birden fazla ürün içeren kutuları atla
     seen.add(href);
+    const badge = /en çok|satan|kargo|sepetinde|kaçırma|kupon|teslimat|tl\b|^\d|^\(|puan|indirim|fırsat|yeni/i;
+    const lines = (a.innerText || el.innerText || '').split('\n').map(s => s.trim())
+      .filter(s => s.length >= 12 && !badge.test(s));
     const title = (a.getAttribute('title') || el.querySelector('h2, h3')?.innerText
-                   || a.innerText.split('\n')[0] || '').trim();
+                   || lines[0] || a.innerText.split('\n')[0] || '').trim();
     const bits = [];
     for (const x of el.querySelectorAll('*')) {
       if (x.children.length) continue;
@@ -360,14 +363,17 @@ TABLE_JS = r"""
 
 SECTION_JS = r"""
 () => {
-  const all = [...document.querySelectorAll('h2, h3, h4, div, span, p')];
-  const head = all.find(e => e.children.length === 0 && /^Fiyat Değişimi$/i.test((e.innerText || '').trim()));
-  if (!head) return null;
-  let box = head.parentElement;
-  for (let i = 0; i < 4 && box && (box.innerText || '').length < 150; i++) box = box.parentElement;
-  const clickables = [...(box ? box.querySelectorAll('*') : [])]
-    .map(e => (e.innerText || '').trim()).filter(t => t && t.length < 15);
-  return { text: box ? box.innerText.slice(0, 700) : '', clickables: [...new Set(clickables)].slice(0, 20) };
+  const body = document.body ? document.body.innerText : '';
+  if (!/fiyat değişim/i.test(body)) return null;
+  // "Fiyat Değişimi" içeren en küçük anlamlı kutuyu bul
+  let best = null;
+  for (const e of document.querySelectorAll('section, div, article')) {
+    const tx = e.innerText || '';
+    if (/fiyat değişim/i.test(tx) && tx.length > 60 && (!best || tx.length < best.innerText.length)) best = e;
+  }
+  const clickables = best ? [...best.querySelectorAll('*')]
+    .map(e => (e.innerText || '').trim()).filter(t => t && t.length < 15) : [];
+  return { text: best ? best.innerText.slice(0, 700) : '', clickables: [...new Set(clickables)].slice(0, 20) };
 }
 """
 
@@ -397,8 +403,14 @@ async def akakce_find(page, title):
 async def akakce_probe(page, candidates):
     """Teşhis: fiyat geçmişi olan bir ürün bulana kadar adayları dener, geçmiş verisinin kaynağını kaydeder."""
     out = []
-    for p in candidates[:4]:
+    seen_titles = set()
+    tried = 0
+    for p in candidates:
         title = p["title"]
+        if title in seen_titles or tried >= 4:
+            continue
+        seen_titles.add(title)
+        tried += 1
         try:
             sc, best = await akakce_find(page, title)
             if not best or sc < 0.45:
@@ -420,13 +432,16 @@ async def akakce_probe(page, candidates):
             page.on("response", on_resp)
             await page.goto(best["h"], wait_until="domcontentloaded", timeout=45000)
             await page.wait_for_timeout(2500)
-            for _ in range(5):
+            for _ in range(12):
                 await page.mouse.wheel(0, 1500)
                 await page.wait_for_timeout(500)
+            await page.wait_for_timeout(1500)
             sec = await page.evaluate(SECTION_JS)
             if not sec:
                 page.remove_listener("response", on_resp)
                 out.append(f"✗ Fiyat geçmişi bölümü yok ({sc:.2f}): {best['t'][:60]}")
+                if captured:
+                    out.append("  VERİ İSTEKLERİ:\n" + "\n".join(captured[:3]))
                 continue
             out.append(f"✓ Geçmişi olan ürün ({sc:.2f}): {best['t'][:70]}\n{best['h'][:120]}")
             out.append("BUTONLAR: " + " | ".join(sec["clickables"]))
