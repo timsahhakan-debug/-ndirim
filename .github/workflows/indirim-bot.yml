@@ -6,7 +6,7 @@ on:
   workflow_dispatch:         # Actions sekmesinden elle çalıştırmak için
 
 permissions:
-  contents: write            # sent.json dosyasını geri kaydedebilmek için
+  contents: write            # gönderim kayıtlarını geri kaydedebilmek için
 
 concurrency:
   group: indirim-bot
@@ -14,8 +14,17 @@ concurrency:
 
 jobs:
   run:
+    name: ${{ matrix.key }}
     runs-on: ubuntu-24.04
     timeout-minutes: 50
+    strategy:
+      fail-fast: false       # biri hata verirse diğerleri devam etsin
+      matrix:
+        include:
+          - { key: hb1,      site: Hepsiburada, shard: "1/2" }
+          - { key: hb2,      site: Hepsiburada, shard: "2/2" }
+          - { key: trendyol, site: Trendyol,    shard: "1/1" }
+          - { key: n11,      site: N11,         shard: "1/1" }
     steps:
       - uses: actions/checkout@v5
 
@@ -32,21 +41,32 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SITE: ${{ matrix.site }}
+          SHARD: ${{ matrix.shard }}
+          JOB_KEY: ${{ matrix.key }}
         run: python bot.py
 
       - name: Teşhis dosyalarını yükle
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: teshis
+          name: teshis-${{ matrix.key }}
           path: debug/
           if-no-files-found: ignore
           retention-days: 3
 
-      - name: Gönderilenler listesini kaydet
+      - name: Gönderim kaydını kaydet
         if: always()
+        env:
+          KEY: ${{ matrix.key }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add sent.json durum.json
-          git diff --staged --quiet || (git commit -m "sent.json güncellendi" && git push)
+          git add -- "sent_${KEY}.json" "durum_${KEY}.json" 2>/dev/null || true
+          if git diff --staged --quiet; then exit 0; fi
+          git commit -m "Kayıt güncellendi (${KEY})"
+          for i in 1 2 3 4 5; do
+            git pull --rebase --quiet && git push --quiet && exit 0
+            sleep $((RANDOM % 10 + 3))
+          done
+          echo "Kayıt gönderilemedi" && exit 1
