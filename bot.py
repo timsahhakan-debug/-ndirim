@@ -329,7 +329,7 @@ async def akakce_probe(page, title):
                                wait_until="domcontentloaded", timeout=45000)
         out.append(f"Arama HTTP {resp.status if resp else '?'} | {(await page.title())[:70]}")
         await page.wait_for_timeout(3000)
-        links = await page.evaluate("""() => [...document.querySelectorAll('a[href]')]
+        links = await page.evaluate(r"""() => [...document.querySelectorAll('a[href]')]
             .map(a => ({h: a.href, t: (a.innerText || a.title || '').trim().slice(0, 80)}))
             .filter(x => /akakce\.com\/.+,\d+\.html/.test(x.h)).slice(0, 3)""")
         for l in links:
