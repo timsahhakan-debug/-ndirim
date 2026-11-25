@@ -101,6 +101,7 @@ N11_TESHIS = False         # True iken N11 ürünleri gönderilmez, örnek kutul
 SITE_PAGES = {"Trendyol": TRENDYOL_PAGES, "N11": N11_PAGES}
 SITE_TESHIS = {"Trendyol": TRENDYOL_TESHIS, "N11": N11_TESHIS}
 SITE_PAGE_KEY = {"Hepsiburada": "sayfa", "Trendyol": "pi", "N11": "pg"}
+AKAKCE_TESHIS = True       # elle çalıştırmada Akakçe sayfa yapısını incele
 SAMPLES = {}               # teşhis için örnek kutular
 TESHIS_MODU = False        # True iken ürün göndermez, örnek kutuların içeriğini gönderir
 MAX_MESSAGES_PER_RUN = 40  # bir çalışmada en fazla kaç ürün gönderilecek
@@ -303,6 +304,56 @@ async def trendyol_select_country(page):
         pass
 
 
+AKAKCE_JS = r"""
+() => {
+  const txt = document.body ? document.body.innerText : '';
+  const lines = txt.split('\n').map(s => s.trim()).filter(Boolean);
+  const hits = lines.filter(l => /düşük|geçmiş|grafik|son \d+ ay|aylık|fiyat değişim/i.test(l) && l.length < 120).slice(0, 15);
+  const els = [...document.querySelectorAll('[id],[class]')]
+    .map(e => (e.id ? '#' + e.id : '') + (e.className ? '.' + e.className.toString().split(' ')[0] : ''))
+    .filter(s => /hist|chart|grafik|gecmis|price/i.test(s));
+  const uniq = [...new Set(els)].slice(0, 15);
+  const scripts = [...document.scripts].map(s => s.src || '').filter(s => /hist|chart|price/i.test(s)).slice(0, 5);
+  return { hits, els: uniq, scripts };
+}
+"""
+
+
+async def akakce_probe(page, title):
+    """Teşhis: ürünü Akakçe'de arar, ilk sonucu açar ve sayfada ne olduğunu döndürür."""
+    from urllib.parse import quote
+    out = [f"Aranan: {title[:90]}"]
+    try:
+        q = " ".join(title.split()[:8])
+        resp = await page.goto(f"https://www.akakce.com/arama/?q={quote(q)}",
+                               wait_until="domcontentloaded", timeout=45000)
+        out.append(f"Arama HTTP {resp.status if resp else '?'} | {(await page.title())[:70]}")
+        await page.wait_for_timeout(3000)
+        links = await page.evaluate("""() => [...document.querySelectorAll('a[href]')]
+            .map(a => ({h: a.href, t: (a.innerText || a.title || '').trim().slice(0, 80)}))
+            .filter(x => /akakce\.com\/.+,\d+\.html/.test(x.h)).slice(0, 3)""")
+        for l in links:
+            out.append(f"Sonuç: {l['t']} -> {l['h'][:120]}")
+        if not links:
+            body = (await page.inner_text("body"))[:200].replace("\n", " ")
+            out.append(f"Sonuç bulunamadı. Sayfa: {body}")
+            return "\n".join(out)
+        resp = await page.goto(links[0]["h"], wait_until="domcontentloaded", timeout=45000)
+        out.append(f"Ürün HTTP {resp.status if resp else '?'} | {(await page.title())[:80]}")
+        await page.wait_for_timeout(3000)
+        for _ in range(4):
+            await page.mouse.wheel(0, 2000)
+            await page.wait_for_timeout(600)
+        info = await page.evaluate(AKAKCE_JS)
+        out.append("SATIRLAR:\n" + "\n".join(info["hits"]))
+        out.append("ELEMANLAR: " + " | ".join(info["els"]))
+        if info["scripts"]:
+            out.append("SCRIPTLER: " + " | ".join(info["scripts"]))
+    except Exception as e:
+        out.append(f"Hata: {str(e)[:150]}")
+    return "\n".join(out)
+
+
 async def scrape_category(page, name, base_url, site="Hepsiburada", pages=None):
     results, seen_count = [], 0
     pages = pages or SITE_PAGES.get(site, PAGES_PER_CATEGORY)
@@ -469,6 +520,11 @@ async def main():
             total_seen += count
             site_counts[full] = count
             found += items
+        if AKAKCE_TESHIS and manual and found:
+            best = max(found, key=lambda p: p["disc"])
+            report = await akakce_probe(page, best["title"])
+            send_telegram("🔧 Akakçe teşhis (" + html.escape(JOB_KEY or "tümü") + "):\n\n"
+                          + html.escape(report)[:3700])
         await browser.close()
 
     for site in ("Trendyol", "N11"):
