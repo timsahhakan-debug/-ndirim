@@ -358,66 +358,92 @@ TABLE_JS = r"""
 """
 
 
-async def akakce_probe(page, title):
-    """Teşhis: ürünü Akakçe'de arar, en iyi eşleşmeyi açar, 6 aylık geçmişi okumaya çalışır."""
+SECTION_JS = r"""
+() => {
+  const all = [...document.querySelectorAll('h2, h3, h4, div, span, p')];
+  const head = all.find(e => e.children.length === 0 && /^Fiyat Değişimi$/i.test((e.innerText || '').trim()));
+  if (!head) return null;
+  let box = head.parentElement;
+  for (let i = 0; i < 4 && box && (box.innerText || '').length < 150; i++) box = box.parentElement;
+  const clickables = [...(box ? box.querySelectorAll('*') : [])]
+    .map(e => (e.innerText || '').trim()).filter(t => t && t.length < 15);
+  return { text: box ? box.innerText.slice(0, 700) : '', clickables: [...new Set(clickables)].slice(0, 20) };
+}
+"""
+
+
+async def akakce_find(page, title):
+    """Ürünü Akakçe'de arar, en iyi eşleşmenin linkini ve puanını döndürür."""
     from urllib.parse import quote
-    out = [f"Aranan: {title[:90]}"]
-    try:
-        q = " ".join(title.split()[:8])
-        resp = await page.goto(f"https://www.akakce.com/arama/?q={quote(q)}",
-                               wait_until="domcontentloaded", timeout=45000)
-        out.append(f"Arama HTTP {resp.status if resp else '?'}")
-        await page.wait_for_timeout(3000)
-        links = await page.evaluate(r"""() => {
-            const seen = new Set(); const res = [];
-            for (const a of document.querySelectorAll('a[href]')) {
-              const h = a.href.split('?')[0];
-              if (!/akakce\.com\/.+,\d+\.html/.test(h) || seen.has(h)) continue;
-              seen.add(h);
-              const box = a.closest('li') || a;
-              const t = (a.title || box.querySelector('h3, h2')?.innerText || a.innerText || '').split('\n')[0].trim();
-              res.push({h, t: t.slice(0, 120)});
-              if (res.length >= 10) break;
-            }
-            return res; }""")
-        scored = sorted(((match_score(title, l["t"]), l) for l in links), key=lambda x: -x[0])
-        for sc, l in scored[:4]:
-            out.append(f"Eşleşme {sc:.2f}: {l['t'][:80]}")
-        if not scored or scored[0][0] < 0.45:
-            out.append("Yeterince benzer ürün bulunamadı, atlanırdı.")
-            return "\n".join(out)
-        url = scored[0][1]["h"]
-        resp = await page.goto(url, wait_until="domcontentloaded", timeout=45000)
-        out.append(f"Açılan: {url[:110]}  (HTTP {resp.status if resp else '?'})")
-        await page.wait_for_timeout(2500)
-        for _ in range(4):
-            await page.mouse.wheel(0, 1500)
-            await page.wait_for_timeout(500)
-        periods = await page.evaluate(PERIOD_JS)
-        out.append("DÖNEM BUTONLARI: " + " | ".join(dict.fromkeys(periods)))
-        for label in (r"^\s*6\s*ay\s*$", r"^\s*son 6 ay\s*$"):
-            try:
-                await page.get_by_text(re.compile(label, re.I)).first.click(timeout=4000)
-                out.append("6 ay seçildi")
-                break
-            except Exception:
-                continue
-        await page.wait_for_timeout(1500)
+    q = " ".join(title.split()[:8])
+    await page.goto(f"https://www.akakce.com/arama/?q={quote(q)}", wait_until="domcontentloaded", timeout=45000)
+    await page.wait_for_timeout(2500)
+    links = await page.evaluate(r"""() => {
+        const seen = new Set(); const res = [];
+        for (const a of document.querySelectorAll('a[href]')) {
+          const h = a.href.split('?')[0];
+          if (!/akakce\.com\/.+,\d+\.html/.test(h) || seen.has(h)) continue;
+          seen.add(h);
+          const box = a.closest('li') || a;
+          const t = (a.title || box.querySelector('h3, h2')?.innerText || a.innerText || '').split('\n')[0].trim();
+          res.push({h, t: t.slice(0, 120)});
+          if (res.length >= 10) break;
+        }
+        return res; }""")
+    scored = sorted(((match_score(title, l["t"]), l) for l in links), key=lambda x: -x[0])
+    return scored[0] if scored else (0.0, None)
+
+
+async def akakce_probe(page, candidates):
+    """Teşhis: fiyat geçmişi olan bir ürün bulana kadar adayları dener, geçmiş verisinin kaynağını kaydeder."""
+    out = []
+    for p in candidates[:4]:
+        title = p["title"]
         try:
-            await page.get_by_text(re.compile(r"^\s*Tablo\s*$", re.I)).first.click(timeout=4000)
-            out.append("Tablo açıldı")
-        except Exception:
-            out.append("Tablo butonuna tıklanamadı")
-        await page.wait_for_timeout(1500)
-        info = await page.evaluate(TABLE_JS)
-        out.append("ÖZET: " + " / ".join(info["lines"]))
-        out.append(f"TABLO ({info['rowCount']} satır):\n" + "\n".join(info["rows"]))
-        if info["lastRows"]:
-            out.append("SON SATIRLAR:\n" + "\n".join(info["lastRows"]))
-        if not info["rowCount"]:
-            out.append("BÖLÜM METNİ:\n" + info["box"])
-    except Exception as e:
-        out.append(f"Hata: {str(e)[:150]}")
+            sc, best = await akakce_find(page, title)
+            if not best or sc < 0.45:
+                out.append(f"✗ Eşleşme yok ({sc:.2f}): {title[:60]}")
+                continue
+            captured = []
+
+            async def on_resp(r):
+                u = r.url
+                ct = r.headers.get("content-type", "")
+                if "akakce" in u and ("json" in ct or re.search(r"price|fiyat|hist|gecmis|chart|grafik|graph", u, re.I)) \
+                        and not re.search(r"\.(js|css|png|jpg|webp|svg|woff2?)(\?|$)", u):
+                    try:
+                        body = (await r.text())[:300]
+                    except Exception:
+                        body = "?"
+                    captured.append(f"{r.status} {u[:130]}\n   {body}")
+
+            page.on("response", on_resp)
+            await page.goto(best["h"], wait_until="domcontentloaded", timeout=45000)
+            await page.wait_for_timeout(2500)
+            for _ in range(5):
+                await page.mouse.wheel(0, 1500)
+                await page.wait_for_timeout(500)
+            sec = await page.evaluate(SECTION_JS)
+            if not sec:
+                page.remove_listener("response", on_resp)
+                out.append(f"✗ Fiyat geçmişi bölümü yok ({sc:.2f}): {best['t'][:60]}")
+                continue
+            out.append(f"✓ Geçmişi olan ürün ({sc:.2f}): {best['t'][:70]}\n{best['h'][:120]}")
+            out.append("BUTONLAR: " + " | ".join(sec["clickables"]))
+            try:
+                await page.get_by_text("Tablo", exact=True).first.click(timeout=4000)
+                await page.wait_for_timeout(2000)
+                out.append("Tablo açıldı")
+            except Exception:
+                out.append("Tablo butonuna tıklanamadı")
+            sec2 = await page.evaluate(SECTION_JS)
+            out.append("BÖLÜM METNİ:\n" + (sec2 or sec)["text"])
+            await page.wait_for_timeout(1500)
+            page.remove_listener("response", on_resp)
+            out.append("VERİ İSTEKLERİ:\n" + ("\n".join(captured[:5]) or "yok"))
+            break
+        except Exception as e:
+            out.append(f"Hata: {str(e)[:120]}")
     return "\n".join(out)
 
 
@@ -588,8 +614,8 @@ async def main():
             site_counts[full] = count
             found += items
         if AKAKCE_TESHIS and manual and found:
-            best = max(found, key=lambda p: p["disc"])
-            report = await akakce_probe(page, best["title"])
+            cands = sorted(found, key=lambda p: -p["disc"])
+            report = await akakce_probe(page, cands)
             send_telegram("🔧 Akakçe teşhis (" + html.escape(JOB_KEY or "tümü") + "):\n\n"
                           + html.escape(report)[:3700])
         await browser.close()
