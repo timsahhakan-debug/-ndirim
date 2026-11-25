@@ -105,6 +105,8 @@ AKAKCE_TESHIS = False      # eski teşhis (kapalı)
 AKAKCE_FILTRE = True       # sadece Akakçe'ye göre son 6 ayın en düşük fiyatındaki ürünleri gönder
 AKAKCE_MAX_KONTROL = 25    # her işte, her çalışmada Akakçe'de en fazla kaç ürün kontrol edilsin
 AKAKCE_TOLERANS = 1.01     # fiyatımız Akakçe'deki en ucuzdan en fazla %1 yüksek olabilir
+GECMIS_GUN = 183           # fiyat geçmişi ne kadar tutulsun (gün)
+GECMIS_MIN_GUN = 30        # kendi geçmişimize güvenmek için gereken en az gün
 SAMPLES = {}               # teşhis için örnek kutular
 TESHIS_MODU = False        # True iken ürün göndermez, örnek kutuların içeriğini gönderir
 MAX_MESSAGES_PER_RUN = 40  # bir çalışmada en fazla kaç ürün gönderilecek
@@ -126,6 +128,8 @@ STATE_FILE = Path(__file__).parent / f"sent{_SUFFIX}.json"
 LEGACY_STATE = Path(__file__).parent / "sent.json"
 DEBUG_DIR = Path(__file__).parent / "debug"
 STATUS_FILE = Path(__file__).parent / f"durum{_SUFFIX}.json"
+HISTORY_FILE = Path(__file__).parent / "history" / f"fiyat{_SUFFIX}.json"  # GitHub önbelleğinde tutulur
+PRICE_SEEN = {}            # bu çalışmada görülen tüm ürün fiyatları
 AKAKCE_CACHE_FILE = Path(__file__).parent / f"akakce{_SUFFIX}.json"  # Akakçe sonuç önbelleği  # arka arkaya engellenme sayısı
 DIAG = []  # teşhis bilgileri
 
@@ -504,34 +508,18 @@ async def akakce_check(page, p):
     low = await page.evaluate(LOWPRICE_JS)
     if not await page.evaluate(SECTION_JS):
         return False, "fiyat geçmişi yok", low
-    def sentence(s):
-        m = re.search(r"Bu (ürün|fiyat)[^\n.]*\.?", s or "")
-        return m.group(0) if m else "(cümle yok)"
-    before = sentence((await page.evaluate(SECTION_JS) or {"text": ""})["text"])
-    clicked = False
-    try:
-        for loc in await page.get_by_text("6A", exact=True).all():
-            if await loc.is_visible():
-                await loc.scroll_into_view_if_needed(timeout=3000)
-                await loc.click(timeout=4000)
-                clicked = True
-                break
-    except Exception:
-        pass
-    if not clicked:
-        return False, f"6A tıklanamadı | önce: {before}", low
-    await page.wait_for_timeout(2500)
     sec = await page.evaluate(SECTION_JS) or {"text": ""}
-    txt = sentence(sec["text"])
-    if re.search(r"son 6 ay\w*\s+(içinde\s+)?daha düşük", txt, re.I):
-        return False, "6 ayda daha düşük görmüş", low
-    if not re.search(r"son 6 ay\w*\s+en ucuz", txt, re.I):
-        return False, f"cümle uymadı | önce: {before} | sonra: {txt}", low
+    m = re.search(r"Bu (ürün|fiyat)[^\n.]*\.?", sec["text"] or "")
+    txt = m.group(0) if m else ""
+    if re.search(r"daha düşük fiyat gördü", txt, re.I):
+        return False, "son 1 ayda daha düşük görmüş", low
+    if not re.search(r"son 1 ay\w*\s+en ucuz", txt, re.I):
+        return False, f"cümle okunamadı: {txt[:60] or '(yok)'}", low
     if low is None:
         return False, "Akakçe fiyatı okunamadı", low
     if p["new"] and p["new"] > low * AKAKCE_TOLERANS:
-        return False, f"Akakçe'de daha ucuz ({fmt_price(low)} TL)", low
-    return True, "6 ayın en düşüğü", low
+        return False, f"Akakçe'de daha ucuz", low
+    return True, "1 ayın en düşüğü (Akakçe)", low
 
 
 async def akakce_filter(page, cands, report):
@@ -564,6 +552,71 @@ async def akakce_filter(page, cands, report):
             p["akakce_low"] = low
             passed.append(p)
     AKAKCE_CACHE_FILE.write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")
+    return passed
+
+
+def load_history():
+    try:
+        return json.loads(HISTORY_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def history_info(hist, url, today):
+    """Kayıtlardaki geçmiş: (kaç günlük, dönemdeki en düşük fiyat). Bugünkü kayıt hariç."""
+    rows = [r for r in hist.get(url, []) if r[0] < today]
+    if not rows:
+        return 0, None
+    cutoff = today - GECMIS_GUN
+    window = [r for r in rows if r[0] >= cutoff]
+    before = [r for r in rows if r[0] < cutoff]
+    if before:                      # dönem başında geçerli olan fiyat
+        window.append(before[-1])
+    first_day = max(rows[0][0], cutoff)
+    return today - first_day, min(r[1] for r in window)
+
+
+def update_history(hist, today):
+    """Bu çalışmada görülen fiyatları ekler (sadece değişince), eski kayıtları siler."""
+    cutoff = today - GECMIS_GUN
+    for url, price in PRICE_SEEN.items():
+        rows = hist.setdefault(url, [])
+        if rows and rows[-1][0] == today:
+            rows[-1][1] = min(rows[-1][1], price)   # gün içindeki en düşük
+        elif not rows or rows[-1][1] != price:
+            rows.append([today, price])
+    for url in list(hist):
+        rows = hist[url]
+        old = [r for r in rows if r[0] < cutoff]
+        keep = ([old[-1]] if old else []) + [r for r in rows if r[0] >= cutoff]
+        if not keep or keep[-1][0] < cutoff:       # 6 aydır görülmeyen ürün
+            del hist[url]
+        else:
+            hist[url] = keep
+    HISTORY_FILE.parent.mkdir(exist_ok=True)
+    HISTORY_FILE.write_text(json.dumps(hist, separators=(",", ":")), encoding="utf-8")
+
+
+async def lowest_filter(page, cands, report, hist, today):
+    """Kendi geçmişimiz yeterliyse onu, değilse Akakçe'yi kullanır."""
+    to_akakce = []
+    passed = []
+    for p in cands:
+        days, low = history_info(hist, p["url"], today)
+        if days >= GECMIS_MIN_GUN and low is not None:
+            ok = p["new"] is not None and p["new"] <= low
+            why = f"{days} günün en düşüğü (kayıtlar)" if ok else f"{days} günde daha düşük görülmüş"
+            report.append(f"{'✅' if ok else '✗'} {p['title'][:45]} | bizde {fmt_price(p['new'] or 0)} | "
+                          f"kayıt en düşük {fmt_price(low)} | {why}")
+            if ok:
+                p["lowest_note"] = f"Son {days} günün en düşük fiyatı (kayıtlarımız)"
+                passed.append(p)
+        else:
+            to_akakce.append(p)
+    if to_akakce:
+        for p in await akakce_filter(page, to_akakce, report):
+            p["lowest_note"] = "Son 1 ayın en düşük fiyatı (Akakçe)"
+            passed.append(p)
     return passed
 
 
@@ -616,6 +669,9 @@ async def scrape_category(page, name, base_url, site="Hepsiburada", pages=None):
             continue
         for c in cards:
             old, new, disc = analyze_fields(c)
+            if new:
+                u = c["url"]
+                PRICE_SEEN[u] = min(new, PRICE_SEEN.get(u, new))
             if disc >= MIN_DISCOUNT and disc < 95:
                 results.append({"url": c["url"], "title": c["title"], "sepet": c.get("sepet"),
                                 "old": old, "new": new, "disc": disc, "cat": name, "text": c["text"],
@@ -660,8 +716,8 @@ def format_message(p) -> str:
                      + (" (sepette)" if p.get("sepet") else ""))
     elif p["new"]:
         lines.append(f"<b>{fmt_price(p['new'])} TL</b>")
-    if p.get("akakce_low"):
-        lines.append("📉 Son 6 ayın en düşük fiyatı (Akakçe)")
+    if p.get("lowest_note"):
+        lines.append("📉 " + html.escape(p["lowest_note"]))
     lines.append(p["url"])
     return "\n".join(lines)
 
@@ -741,13 +797,19 @@ async def main():
             if p["url"] not in state_pre and p["url"] not in uniq_pre:
                 uniq_pre[p["url"]] = p
         akakce_report = []
+        today = int(time.time() // 86400)
+        hist = load_history()
         if AKAKCE_FILTRE and uniq_pre:
-            passed = await akakce_filter(page, list(uniq_pre.values()), akakce_report)
+            passed = await lowest_filter(page, list(uniq_pre.values()), akakce_report, hist, today)
             found = passed
-            print("Akakçe:\n" + "\n".join(akakce_report))
+            print("En düşük fiyat kontrolü:\n" + "\n".join(akakce_report))
             if manual and akakce_report:
-                send_telegram("📊 Akakçe kontrolü (" + html.escape(JOB_KEY or "tümü") + "):\n\n"
+                send_telegram("📊 En düşük fiyat kontrolü (" + html.escape(JOB_KEY or "tümü") + "):\n\n"
                               + html.escape("\n".join(akakce_report))[:3700])
+        elif AKAKCE_FILTRE:
+            found = []
+        update_history(hist, today)
+        print(f"Fiyat geçmişi: {len(hist)} ürün kayıtlı, bu çalışmada {len(PRICE_SEEN)} fiyat görüldü.")
         if AKAKCE_TESHIS and manual and found:
             cands = sorted(found, key=lambda p: -p["disc"])
             report = await akakce_probe(page, cands)
