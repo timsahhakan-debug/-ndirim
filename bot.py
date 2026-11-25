@@ -43,6 +43,31 @@ TRENDYOL_CATEGORIES = {
 }
 TRENDYOL_PAGES = 1         # Trendyol'da kategori başına sayfa
 TRENDYOL_TESHIS = False    # True iken Trendyol ürünleri gönderilmez, örnek kutular gönderilir
+N11_CATEGORIES = {
+    "Ayakkabı & Çanta": "https://www.n11.com/ayakkabi-ve-canta",
+    "Kadın Giyim": "https://www.n11.com/kadin-giyim-aksesuar",
+    "Erkek Giyim": "https://www.n11.com/erkek-giyim-aksesuar",
+    "Telefon & Aksesuar": "https://www.n11.com/telefon-ve-aksesuarlari",
+    "Elektrikli Ev Aletleri": "https://www.n11.com/elektrikli-ev-aletleri",
+    "Mutfak Gereçleri": "https://www.n11.com/mutfak-gerecleri",
+    "Yapı Market & Bahçe": "https://www.n11.com/yapi-market-ve-bahce",
+    "Gıda & Şekerleme": "https://www.n11.com/supermarket/gida-ve-sekerleme",
+    "Deterjan & Temizlik": "https://www.n11.com/supermarket/deterjan-ve-temizlik",
+    "Parfüm & Deodorant": "https://www.n11.com/parfum-ve-deodorant",
+    "Saç Bakım": "https://www.n11.com/sac-bakim-ve-sekillendirme",
+    "Yüz & Vücut Bakımı": "https://www.n11.com/yuz-ve-vucut-bakimi",
+    "Makyaj": "https://www.n11.com/makyaj",
+    "Sağlık & Medikal": "https://www.n11.com/saglik-ve-medikal-urunler",
+    "Erkek Bakım": "https://www.n11.com/erkek-bakim-urunleri",
+    "Kadın Bakım": "https://www.n11.com/kadin-bakim-urunleri",
+    "Oto Aksesuar & Tuning": "https://www.n11.com/aksesuar-ve-tuning",
+}
+N11_PAGES = 1              # N11'de kategori başına sayfa
+N11_TESHIS = True          # True iken N11 ürünleri gönderilmez, örnek kutular gönderilir
+
+SITE_PAGES = {"Trendyol": TRENDYOL_PAGES, "N11": N11_PAGES}
+SITE_TESHIS = {"Trendyol": TRENDYOL_TESHIS, "N11": N11_TESHIS}
+SITE_PAGE_KEY = {"Hepsiburada": "sayfa", "Trendyol": "pi", "N11": "pg"}
 SAMPLES = {}               # teşhis için örnek kutular
 TESHIS_MODU = False        # True iken ürün göndermez, örnek kutuların içeriğini gönderir
 MAX_MESSAGES_PER_RUN = 40  # bir çalışmada en fazla kaç ürün gönderilecek
@@ -145,7 +170,7 @@ EXTRACT_JS = r"""
 () => {
   const out = [];
   const seen = new Set();
-  const isProduct = h => /-p(m)?-[A-Za-z0-9]+/.test(h);
+  const isProduct = h => /-p(m)?-[A-Za-z0-9]+/.test(h) || /n11\.com\/urun\//.test(h);
   for (const a of document.querySelectorAll('a[href]')) {
     const href = a.href.split('?')[0].split('#')[0];
     if (!isProduct(href) || seen.has(href)) continue;
@@ -187,7 +212,7 @@ def page_url(base: str, n: int, site: str = "Hepsiburada") -> str:
     if n == 1:
         return base
     sep = "&" if "?" in base else "?"
-    key = "pi" if site == "Trendyol" else "sayfa"
+    key = SITE_PAGE_KEY.get(site, "sayfa")
     return f"{base}{sep}{key}={n}"
 
 
@@ -238,7 +263,7 @@ async def trendyol_select_country(page):
 
 async def scrape_category(page, name, base_url, site="Hepsiburada"):
     results, seen_count = [], 0
-    pages = TRENDYOL_PAGES if site == "Trendyol" else PAGES_PER_CATEGORY
+    pages = SITE_PAGES.get(site, PAGES_PER_CATEGORY)
     for n in range(1, pages + 1):
         url = page_url(base_url, n, site)
         try:
@@ -274,7 +299,7 @@ async def scrape_category(page, name, base_url, site="Hepsiburada"):
             print(f"[{name}] HTTP {status} | başlık: {title} | metin: {body}")
             DIAG.append(f"{name}: HTTP {status} | {title} | {body}")
             break
-        if site == "Trendyol" and TRENDYOL_TESHIS:
+        if SITE_TESHIS.get(site):
             SAMPLES.setdefault(name, cards[:2])
             await page.wait_for_timeout(random.randint(3000, 6000))
             continue
@@ -378,28 +403,33 @@ async def main():
             items, count = await scrape_category(page, f"Hepsiburada · {name}", url)
             total_seen += count
             found += items
-        ty_counts = {}
+        site_counts = {}
         manual = os.environ.get("GITHUB_EVENT_NAME", "workflow_dispatch") == "workflow_dispatch"
-        for name, url in TRENDYOL_CATEGORIES.items():
-            if not url.startswith("http"):
+        for site, cats_ in (("Trendyol", TRENDYOL_CATEGORIES), ("N11", N11_CATEGORIES)):
+            if SITE_TESHIS.get(site) and not manual:  # teşhis sadece elle çalıştırmada
                 continue
-            if TRENDYOL_TESHIS and not manual:  # teşhis sadece elle çalıştırmada
-                continue
-            full = f"Trendyol · {name}"
-            items, count = await scrape_category(page, full, url, site="Trendyol")
-            ty_counts[full] = count
-            found += items
+            for name, url in cats_.items():
+                if not url.startswith("http"):
+                    continue
+                full = f"{site} · {name}"
+                items, count = await scrape_category(page, full, url, site=site)
+                site_counts[full] = count
+                found += items
         await browser.close()
 
-    if TRENDYOL_TESHIS and ty_counts:
-        lines = [f"{k}: {v} ürün okundu" for k, v in ty_counts.items()]
-        extra = []
-        for d in DIAG:  # tekrarları at
-            if d.startswith("Trendyol") and d not in extra:
-                extra.append(d)
-        lines += extra
-        send_telegram("🔧 Trendyol teşhis:\n\n" + html.escape("\n".join(lines))[:3800])
-        for name, cards in list(SAMPLES.items())[:3]:
+    for site in ("Trendyol", "N11"):
+        if not SITE_TESHIS.get(site):
+            continue
+        counts = {k: v for k, v in site_counts.items() if k.startswith(site)}
+        if not counts:
+            continue
+        lines = [f"{k}: {v} ürün okundu" for k, v in counts.items()]
+        for d in DIAG:
+            if d.startswith(site) and d not in lines:
+                lines.append(d)
+        send_telegram(f"🔧 {site} teşhis:\n\n" + html.escape("\n".join(lines))[:3800])
+        samples = [(n, c) for n, c in SAMPLES.items() if n.startswith(site)]
+        for name, cards in samples[:3]:
             for c in cards[:1]:
                 msg = (f"{name}\n{c['url']}\n\nKUTU METNİ:\n{c['text'][:900]}"
                        f"\n\nFİYAT ALANLARI:\n" + "\n".join(c.get("bits", [])))
